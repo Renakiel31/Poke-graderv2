@@ -63,15 +63,19 @@ def search_tcgdex_fallback(query):
         # On adapte le format pour qu'il ressemble à l'API principale
         results = []
         if data:
-            # On prend les 5 premiers
-            for card in data[:5]:
-                # On vérifie si l'image existe (TCGDex a parfois des images 'low' seulement)
+            # AUGMENTATION LIMITE FALLBACK : On prend 20 cartes au lieu de 5
+            for card in data[:20]:
+                # On vérifie si l'image existe
                 img_url = f"{card['image']}/high.png" if 'image' in card else None
                 if not img_url: continue
+
+                # Extraction du numéro si possible (souvent caché dans l'ID local)
+                card_number = card['id'].split('-')[-1] if '-' in card['id'] else ""
 
                 results.append({
                     'id': card['id'],
                     'name': card['name'],
+                    'number': card_number, # Ajout du numéro pour eBay
                     'set': {'name': card.get('set', {}).get('name', 'Inconnu')},
                     'rarity': card.get('rarity', 'Inconnue'),
                     'images': {'small': img_url, 'large': img_url},
@@ -91,55 +95,49 @@ def get_card_price(user_query):
     clean_query = user_query.lower().strip()
     
     # 1. OPTIMISATION : Détection de numéro (ex: "200/165" ou "200")
-    # On cherche un pattern de type "chiffres" ou "chiffres/chiffres" à la fin
     match = re.search(r'(\d+)(?:/\d+)?$', clean_query)
     number_query = ""
     name_part = clean_query
     
     if match:
-        number_val = match.group(1) # Récupère le "200"
+        number_val = match.group(1) 
         number_query = f" number:{number_val}"
-        # On enlève le numéro du nom pour la traduction
         name_part = clean_query[:match.start()].strip()
 
     # 2. Traduction du nom
     translated_name = POKEMON_NAMES.get(name_part, name_part)
     
     # 3. Construction de la requête optimisée
-    # Ex: q=name:"blastoise*" number:200
     final_query = f"name:\"{translated_name}*\"{number_query}"
     
     try:
-        url = f"https://api.pokemontcg.io/v2/cards?q={final_query}&pageSize=6"
+        # AUGMENTATION LIMITE : pageSize passe de 6 à 30 pour voir plus de résultats
+        url = f"https://api.pokemontcg.io/v2/cards?q={final_query}&pageSize=30"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0'}
         
-        response = requests.get(url, headers=headers, timeout=20) # Timeout raisonnable
+        response = requests.get(url, headers=headers, timeout=20) 
         
-        # Vérification si la réponse est bien du JSON valide
         try:
             data = response.json()
         except ValueError:
-            # Si l'API renvoie du HTML (erreur 502/504), on lève une exception pour déclencher le fallback
             raise Exception("Réponse API invalide (pas de JSON)")
 
         if 'data' in data and data['data']:
             return data['data'], "official"
         
-        # Si rien trouvé avec la requête précise, on tente une recherche large (juste le nom)
+        # Recherche large si échec précis
         if number_query:
-            url_broad = f"https://api.pokemontcg.io/v2/cards?q=name:\"{translated_name}*\"&pageSize=6"
+            url_broad = f"https://api.pokemontcg.io/v2/cards?q=name:\"{translated_name}*\"&pageSize=30"
             response_broad = requests.get(url_broad, headers=headers, timeout=20)
             data_broad = response_broad.json()
             if 'data' in data_broad and data_broad['data']:
                 return data_broad['data'], "official"
 
-        # Si toujours rien, on force l'erreur pour passer au fallback
         raise Exception("Aucun résultat sur API Officielle")
 
     except Exception as e:
         st.warning(f"⚠️ API Prix indisponible ({e}). Bascule sur l'API de secours (Images seules)...")
-        # FALLBACK sur TCGDex
-        fallback_results = search_tcgdex_fallback(name_part) # On cherche avec le nom français original
+        fallback_results = search_tcgdex_fallback(name_part)
         if fallback_results:
             return fallback_results, "fallback"
         
@@ -255,28 +253,41 @@ with st.expander("🔎 1. Recherche & Prix", expanded=True):
 
     if 'api_results' in st.session_state and st.session_state['api_results']:
         
-        # Message d'info sur la source
         if st.session_state['api_source'] == "fallback":
-            st.info("ℹ️ Mode Secours activé (TCGDex). Les prix ne sont pas disponibles, veuillez les entrer manuellement.")
+            st.info("ℹ️ Mode Secours activé (TCGDex).")
         else:
-            st.success("✅ Données officielles chargées (avec prix).")
+            st.success(f"✅ Données officielles chargées ({len(st.session_state['api_results'])} résultats).")
             
         st.write("### Choisissez votre carte :")
+        # On affiche tout sans limitation (la pagination API gère la limite)
         cols = st.columns(2)
-        for i, card in enumerate(st.session_state['api_results'][:6]):
+        for i, card in enumerate(st.session_state['api_results']):
             col_idx = i % 2
             with cols[col_idx]:
                 img_url = card['images']['small']
                 st.image(img_url, use_container_width=True)
                 
+                # Prix Cardmarket
                 price_disp = "Prix N/A"
-                if card['cardmarket'] and 'prices' in card['cardmarket']:
+                if card.get('cardmarket') and 'prices' in card['cardmarket']:
                     price_val = card['cardmarket']['prices']['averageSellPrice']
                     price_disp = f"{price_val} €"
                 
+                # Bouton Sélectionner
                 if st.button(f"Sélectionner ({price_disp})", key=f"sel_{card['id']}"):
                     st.session_state['selected_api_card'] = card
                     st.success(f"Carte sélectionnée : {card['name']}")
+                
+                # LIEN EBAY VENTES REUSSIES
+                # Construction de la recherche eBay : Nom + Numéro
+                card_num = card.get('number', '')
+                if not card_num and '-' in card['id']: # Tentative extraction ID pour fallback
+                     card_num = card['id'].split('-')[-1]
+                
+                ebay_search = f"{card['name']} {card_num}".strip()
+                # URL eBay: _nkw=recherche, LH_Sold=1 (Vendus), LH_Complete=1 (Terminés)
+                ebay_url = f"https://www.ebay.fr/sch/i.html?_nkw={ebay_search}&LH_Sold=1&LH_Complete=1"
+                st.markdown(f"🔗 [Voir ventes eBay réussies]({ebay_url})")
 
 final_price_str = "Non défini"
 selected_card_data = None
