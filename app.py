@@ -8,13 +8,12 @@ import requests
 import re
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Poké-Station V16", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Poké-Station V17", page_icon="⚡", layout="wide")
 
 # 🔒 CONFIGURATION MOT DE PASSE DE SECOURS
 MOT_DE_PASSE_SECOURS = "admin"
 
 # --- DICTIONNAIRE DE TRADUCTION (FR -> EN) ---
-# Ajout de "Embrochet" pour l'exemple
 POKEMON_NAMES = {
     "tortank": "Blastoise", "dracaufeu": "Charizard", "florizarre": "Venusaur",
     "reptincel": "Charmeleon", "salameche": "Charmander", "carapuce": "Squirtle",
@@ -61,10 +60,9 @@ if not check_password():
 def clean_number(num_str):
     """Nettoie un numéro de carte pour comparaison (ex: '082' -> '82')"""
     if not num_str: return ""
-    # Garde seulement les chiffres
     nums = re.findall(r'\d+', str(num_str))
     if nums:
-        return str(int(nums[0])) # Enlève les zéros non significatifs
+        return str(int(nums[0]))
     return ""
 
 def search_tcgdex_fallback(query_name, target_number=None):
@@ -80,27 +78,22 @@ def search_tcgdex_fallback(query_name, target_number=None):
             for card in data:
                 if count >= 60: break 
                 
-                # Extraction du numéro (souvent à la fin de l'ID local ex: sv3pt5-184)
                 raw_number = card['id'].split('-')[-1] if '-' in card['id'] else ""
                 
-                # FILTRAGE PAR NUMERO SI DEMANDÉ
                 if target_number:
-                    # On compare les numéros nettoyés (82 == 082)
                     if clean_number(raw_number) != clean_number(target_number):
-                        continue # On passe si ça ne correspond pas
+                        continue
 
                 img_url = f"{card['image']}/high.png" if 'image' in card else None
                 if not img_url: continue
 
-                # Extraction infos supplémentaires (TCGDex donne moins d'infos directes dans la liste)
-                # On fait avec ce qu'on a
                 set_name = card.get('set', {}).get('name', 'Série Inconnue')
                 
                 results.append({
                     'id': card['id'],
                     'name': card['name'],
                     'number': raw_number, 
-                    'set': {'name': set_name, 'releaseDate': 'Inconnue'}, # Date souvent absente en liste simple
+                    'set': {'name': set_name, 'releaseDate': 'Inconnue'},
                     'artist': card.get('illustrator', 'Inconnu'),
                     'rarity': card.get('rarity', 'Standard'),
                     'images': {'small': img_url, 'large': img_url},
@@ -116,25 +109,21 @@ def get_card_price(user_query):
     """Recherche multi-sources avec gestion intelligente du numéro."""
     clean_query = user_query.lower().strip()
     
-    # 1. Extraction Nom / Numéro
-    # Regex pour trouver un numéro à la fin (ex: "82" ou "082" ou "82/165")
     match = re.search(r'(\d+)(?:/\d+)?$', clean_query)
     number_query = ""
-    target_number = None # Pour le filtrage manuel fallback
+    target_number = None
     name_part = clean_query
     
     if match:
         number_val = match.group(1) 
         target_number = number_val
         number_query = f" number:{number_val}"
-        name_part = clean_query[:match.start()].strip() # Enlève le numéro du nom
+        name_part = clean_query[:match.start()].strip()
 
-    # 2. Traduction
     name_words = name_part.split()
     translated_words = [POKEMON_NAMES.get(word, word) for word in name_words]
     translated_name = " ".join(translated_words)
     
-    # 3. Requête Officielle
     final_query = f"name:\"{translated_name}*\"{number_query}"
     
     try:
@@ -147,11 +136,9 @@ def get_card_price(user_query):
         if 'data' in data and data['data']:
             return data['data'], "official"
         
-        # Si échec officiel, on tente le fallback TCGDex avec le nom FR original
         raise Exception("Rien sur API Officielle")
 
     except Exception:
-        # On passe le numéro cible au fallback pour filtrer
         fallback_results = search_tcgdex_fallback(name_part, target_number)
         if fallback_results:
             return fallback_results, "fallback"
@@ -167,7 +154,6 @@ def draw_alignment_lines(img, l_out, l_in, r_in, r_out, t_out, t_in, b_in, b_out
     h, w = img.shape[:2]
     YELLOW = (0, 255, 255)
     GREEN = (0, 255, 0)
-    # Lignes un peu plus épaisses pour le mobile
     THICKNESS = 3 
     
     cv2.line(img_lines, (l_out, 0), (l_out, h), YELLOW, THICKNESS)
@@ -243,7 +229,7 @@ def create_pdf(image_array, card_name, g_px, d_px, h_px, b_px, rh, rv, final_pri
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 # --- INTERFACE ---
-st.title("⚡ Poké-Station V16")
+st.title("⚡ Poké-Station V17")
 
 if 'selected_api_card' not in st.session_state:
     st.session_state['selected_api_card'] = None
@@ -258,7 +244,6 @@ if 'search_expanded' not in st.session_state:
 with st.expander("🔎 1. Recherche & Prix", expanded=st.session_state['search_expanded']):
     col_search, col_btn = st.columns([3, 1])
     with col_search:
-        # Placeholder mis à jour pour inciter à mettre le numéro
         search_query = st.text_input("Nom + Numéro (ex: Embrochet 82)", placeholder="ex: Embrochet 82")
     with col_btn:
         st.write("") 
@@ -301,7 +286,6 @@ if st.session_state['selected_api_card']:
     with col_sel_info:
         st.subheader(f"{card['name']}")
         
-        # --- BLOC DÉTAILS AMÉLIORÉ ---
         set_name = card.get('set', {}).get('name', 'Inconnu')
         artist = card.get('artist', 'Inconnu')
         release = card.get('set', {}).get('releaseDate', 'Inconnue')
@@ -347,7 +331,6 @@ elif 'api_results' in st.session_state and st.session_state['api_results'] and n
                 st.session_state['search_expanded'] = False
                 st.rerun()
             
-            # Lien eBay
             card_num = str(card.get('number', ''))
             if not card_num and '-' in str(card['id']):
                     card_num = str(card['id']).split('-')[-1]
@@ -402,13 +385,44 @@ if st.session_state['selected_api_card']:
 if st.session_state['selected_api_card']:
     st.markdown("### 📸 3. Gradation (Centrage)")
     
-    # GUIDE PHOTO
-    st.info("💡 **Guide Photo** : Cadrez la carte bien au centre et bien à plat. Pour la mise au point (netteté), touchez l'écran de votre téléphone avant de prendre la photo.")
+    st.info("💡 **Conseil** : Activez le guide ci-dessous. Pour la mise au point, tapez sur l'écran au centre de la carte.")
 
     tab_cam, tab_upload = st.tabs(["📸 Caméra Directe", "📂 Importer Fichier"])
 
     img_input = None
     with tab_cam:
+        # OPTION GUIDE DE CADRAGE
+        show_guide = st.toggle("🎯 Afficher le Guide de Cadrage (Overlay)", value=True)
+        
+        if show_guide:
+            # INJECTION CSS POUR LE GUIDE
+            st.markdown("""
+            <style>
+            [data-testid="stCameraInput"] > div {
+                position: relative;
+            }
+            [data-testid="stCameraInput"] > div::after {
+                content: "Placer la carte ici";
+                position: absolute;
+                top: 10%;
+                bottom: 25%;
+                left: 15%;
+                right: 15%;
+                border: 3px dashed rgba(255, 255, 0, 0.9);
+                border-radius: 12px;
+                box-shadow: 0 0 0 2000px rgba(0, 0, 0, 0.6); /* Assombrit le reste */
+                z-index: 99;
+                color: rgba(255, 255, 0, 0.8);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-weight: bold;
+                font-size: 1.2em;
+                pointer-events: none; /* Permet de cliquer à travers pour le focus */
+            }
+            </style>
+            """, unsafe_allow_html=True)
+
         cam_pic = st.camera_input("Prendre une photo")
         if cam_pic: img_input = cam_pic
     with tab_upload:
