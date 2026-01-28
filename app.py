@@ -27,7 +27,7 @@ def check_password():
         return True
 
     st.markdown("### 🔒 Accès Restreint")
-    password_input = st.text_input("Entrez le code d'accès", type="Nono050417?!")
+    password_input = st.text_input("Entrez le code d'accès", type="password")
 
     if password_input:
         try:
@@ -268,3 +268,4 @@ if img_input:
         
         pdf_data = create_pdf(final, card_label, bl, br, bt, bb, rh, rv, final_price_str, selected_card_data)
         st.download_button("📥 PDF", pdf_data, f"Rapport.pdf", "application/pdf")
+
