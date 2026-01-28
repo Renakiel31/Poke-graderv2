@@ -8,7 +8,11 @@ import requests
 import re
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Poké-Station V14", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Poké-Station V15", page_icon="⚡", layout="wide")
+
+# 🔒 CONFIGURATION MOT DE PASSE DE SECOURS
+# Modifiez "admin" ci-dessous par le mot de passe que vous souhaitez
+MOT_DE_PASSE_SECOURS = "admin"
 
 # --- DICTIONNAIRE DE TRADUCTION (FR -> EN) ---
 POKEMON_NAMES = {
@@ -34,19 +38,20 @@ def check_password():
 
     if password_input:
         try:
+            # Priorité au fichier secrets.toml s'il existe
             secret_code = st.secrets["access_code"]
             if password_input == secret_code:
                 st.session_state['password_correct'] = True
                 st.rerun()
             else:
-                st.error("❌ Mauvais code")
+                st.error("❌ Code incorrect")
         except (FileNotFoundError, KeyError):
-            # MODIFICATION DU MOT DE PASSE DE SECOURS ICI
-            if password_input == "Nono050417?!": 
+            # Sinon utilisation du mot de passe de secours défini en haut du fichier
+            if password_input == MOT_DE_PASSE_SECOURS: 
                 st.session_state['password_correct'] = True
                 st.rerun()
             else:
-                st.error("❌ Mauvais code (Mode Secours : essayez 'admin')")
+                st.error("❌ Code incorrect") # Message générique pour sécurité
             
     return False
 
@@ -56,7 +61,7 @@ if not check_password():
 # --- FONCTIONS API & UTILITAIRES ---
 
 def search_tcgdex_fallback(query):
-    """API de secours : TCGDex (Français, sans prix mais très complète)"""
+    """API de secours : TCGDex"""
     try:
         url = f"https://api.tcgdex.net/v2/fr/cards?name={query}"
         response = requests.get(url, timeout=15)
@@ -90,13 +95,9 @@ def search_tcgdex_fallback(query):
         return None
 
 def get_card_price(user_query):
-    """
-    Cherche la carte sur l'API officielle (avec prix).
-    Si échoue, bascule sur TCGDex.
-    """
+    """Cherche la carte sur l'API officielle puis fallback."""
     clean_query = user_query.lower().strip()
     
-    # 1. OPTIMISATION : Détection de numéro (ex: "200/165" ou "200")
     match = re.search(r'(\d+)(?:/\d+)?$', clean_query)
     number_query = ""
     name_part = clean_query
@@ -106,12 +107,10 @@ def get_card_price(user_query):
         number_query = f" number:{number_val}"
         name_part = clean_query[:match.start()].strip()
 
-    # 2. Traduction intelligente
     name_words = name_part.split()
     translated_words = [POKEMON_NAMES.get(word, word) for word in name_words]
     translated_name = " ".join(translated_words)
     
-    # 3. Construction de la requête
     final_query = f"name:\"{translated_name}*\"{number_query}"
     
     try:
@@ -119,16 +118,14 @@ def get_card_price(user_query):
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0'}
         
         response = requests.get(url, headers=headers, timeout=30) 
-        
         try:
             data = response.json()
         except ValueError:
-            raise Exception("Réponse API invalide (pas de JSON)")
+            raise Exception("Réponse API invalide")
 
         if 'data' in data and data['data']:
             return data['data'], "official"
         
-        # Recherche large si échec précis
         if number_query:
             url_broad = f"https://api.pokemontcg.io/v2/cards?q=name:\"{translated_name}*\"&pageSize=100"
             response_broad = requests.get(url_broad, headers=headers, timeout=30)
@@ -136,14 +133,12 @@ def get_card_price(user_query):
             if 'data' in data_broad and data_broad['data']:
                 return data_broad['data'], "official"
 
-        raise Exception("Aucun résultat sur API Officielle")
+        raise Exception("Aucun résultat Officiel")
 
-    except Exception as e:
-        st.warning(f"⚠️ API Prix indisponible ou carte introuvable ({e}). Bascule sur l'API de secours...")
+    except Exception:
         fallback_results = search_tcgdex_fallback(name_part)
         if fallback_results:
             return fallback_results, "fallback"
-        
         return None, None
 
 def process_image(image_file):
@@ -230,7 +225,7 @@ def create_pdf(image_array, card_name, g_px, d_px, h_px, b_px, rh, rv, final_pri
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 # --- INTERFACE ---
-st.title("⚡ Poké-Station V14")
+st.title("⚡ Poké-Station V15")
 
 if 'selected_api_card' not in st.session_state:
     st.session_state['selected_api_card'] = None
@@ -238,9 +233,13 @@ if 'api_source' not in st.session_state:
     st.session_state['api_source'] = None
 if 'manual_mode' not in st.session_state:
     st.session_state['manual_mode'] = False
+# Gestion de l'état du panneau de recherche
+if 'search_expanded' not in st.session_state:
+    st.session_state['search_expanded'] = True
 
 # --- 1. RECHERCHE ---
-with st.expander("🔎 1. Recherche & Prix", expanded=True):
+# On utilise la variable d'état pour contrôler l'ouverture/fermeture
+with st.expander("🔎 1. Recherche & Prix", expanded=st.session_state['search_expanded']):
     col_search, col_btn = st.columns([3, 1])
     with col_search:
         search_query = st.text_input("Nom du Pokémon (ex: Tortank 200)", placeholder="Nom + Numéro")
@@ -248,9 +247,9 @@ with st.expander("🔎 1. Recherche & Prix", expanded=True):
         st.write("") 
         st.write("") 
         if st.button("Go"):
-            st.session_state['manual_mode'] = False # Reset mode manuel
-            # RESET SELECTION POUR REAFFICHER LA GRILLE
+            st.session_state['manual_mode'] = False
             st.session_state['selected_api_card'] = None 
+            st.session_state['search_expanded'] = True # On garde ouvert pour les résultats
             with st.spinner("Recherche..."):
                 results, source = get_card_price(search_query)
                 if results:
@@ -259,7 +258,7 @@ with st.expander("🔎 1. Recherche & Prix", expanded=True):
                 else:
                     st.warning("Aucune carte trouvée.")
                     
-    # OPTION MANUELLE DE SECOURS
+    # OPTION MANUELLE DE SECOURS (Dans le panneau)
     if not st.session_state.get('api_results') and not st.session_state['selected_api_card']:
         if st.button("📝 Créer la carte manuellement (si introuvable)"):
             st.session_state['manual_mode'] = True
@@ -267,90 +266,98 @@ with st.expander("🔎 1. Recherche & Prix", expanded=True):
             st.session_state['selected_api_card'] = None
             st.rerun()
 
-    # LOGIQUE D'AFFICHAGE : SOIT CARTE UNIQUE, SOIT GRILLE
-    if st.session_state['selected_api_card']:
-        # --- VUE CARTE UNIQUE (Après sélection) ---
-        card = st.session_state['selected_api_card']
-        
-        st.success("✅ Carte Sélectionnée")
-        col_sel_img, col_sel_info = st.columns([1, 2])
-        
-        with col_sel_img:
-            # On gère le cas manuel où 'images' peut ne pas exister ou être vide
-            if card.get('images') and card['images'].get('small'):
-                st.image(card['images']['small'], width=200)
-            else:
-                st.info("Pas d'image (Mode Manuel)")
+# --- AFFICHAGE (EN DEHORS DU PANNEAU) ---
 
-        with col_sel_info:
-            st.markdown(f"### {card['name']}")
-            st.caption(f"Série : {card['set']['name']}")
-            
-            # Affichage du prix auto s'il existe
-            if card.get('cardmarket') and 'prices' in card['cardmarket']:
-                st.metric("Prix Cardmarket (Moyen)", f"{card['cardmarket']['prices']['averageSellPrice']} €")
-            
-            if st.button("↩️ Changer de carte"):
-                st.session_state['selected_api_card'] = None
-                st.rerun()
-
-    elif 'api_results' in st.session_state and st.session_state['api_results'] and not st.session_state['manual_mode']:
-        # --- VUE GRILLE DE RESULTATS (Si aucune carte sélectionnée) ---
-        
-        if st.session_state['api_source'] == "fallback":
-            st.info("ℹ️ Mode Secours (TCGDex) : Images chargées sans les prix auto.")
-        else:
-            st.success(f"✅ Données officielles : {len(st.session_state['api_results'])} résultats trouvés.")
-            
-        st.write("### Choisissez votre carte :")
-        cols = st.columns(3)
-        for i, card in enumerate(st.session_state['api_results']):
-            col_idx = i % 3
-            with cols[col_idx]:
-                img_url = card['images']['small']
-                st.image(img_url, use_container_width=True)
-                st.caption(f"**{card['name']}**")
-                st.caption(f"_{card['set']['name']}_")
-
-                price_disp = "Prix N/A"
-                if card.get('cardmarket') and 'prices' in card['cardmarket']:
-                    price_val = card['cardmarket']['prices']['averageSellPrice']
-                    price_disp = f"{price_val} €"
-                
-                # BOUTON SELECTION AVEC RERUN
-                if st.button(f"Choisir ({price_disp})", key=f"sel_{card['id']}"):
-                    st.session_state['selected_api_card'] = card
-                    st.rerun() # On recharge pour cacher la grille
-                
-                card_num = str(card.get('number', ''))
-                if not card_num and '-' in str(card['id']):
-                     card_num = str(card['id']).split('-')[-1]
-                
-                ebay_query = f"{card['name']} {card_num}".strip()
-                ebay_url = f"https://www.ebay.fr/sch/i.html?_nkw={ebay_query}&LH_Sold=1&LH_Complete=1"
-                st.markdown(f"🛒 [Voir ventes eBay]({ebay_url})")
-                st.write("---")
+# CAS 1 : CARTE SELECTIONNEE (VUE UNIQUE)
+if st.session_state['selected_api_card']:
+    st.markdown("---") # Séparateur visuel
+    card = st.session_state['selected_api_card']
     
-    # AFFICHAGE FORMULAIRE MANUEL
-    if st.session_state['manual_mode']:
-        st.info("✍️ Mode Manuel activé : Entrez les détails de votre carte.")
-        with st.container():
-            col_m1, col_m2 = st.columns(2)
-            with col_m1:
-                man_name = st.text_input("Nom de la Carte", value=search_query if search_query else "Ma Carte")
-            with col_m2:
-                man_set = st.text_input("Série / Extension", value="Inconnue")
+    # Message succès
+    st.success(f"✅ Carte active : **{card['name']}**")
+    
+    col_sel_img, col_sel_info = st.columns([1, 2])
+    
+    with col_sel_img:
+        if card.get('images') and card['images'].get('small'):
+            st.image(card['images']['small'], width=250)
+        else:
+            st.info("Pas d'image (Mode Manuel)")
+
+    with col_sel_info:
+        st.subheader(f"{card['name']}")
+        st.caption(f"Série : {card['set']['name']}")
+        
+        # Affichage du prix auto s'il existe
+        if card.get('cardmarket') and 'prices' in card['cardmarket']:
+            st.metric("Prix Cardmarket (Moyen)", f"{card['cardmarket']['prices']['averageSellPrice']} €")
+        
+        # Bouton pour changer
+        if st.button("↩️ Changer de carte / Nouvelle recherche"):
+            st.session_state['selected_api_card'] = None
+            st.session_state['search_expanded'] = True # On rouvre la recherche
+            st.rerun()
+
+# CAS 2 : GRILLE DE RESULTATS (Si aucune carte sélectionnée)
+elif 'api_results' in st.session_state and st.session_state['api_results'] and not st.session_state['manual_mode']:
+    
+    st.markdown("---")
+    if st.session_state['api_source'] == "fallback":
+        st.info("ℹ️ Mode Secours (TCGDex) : Images chargées sans les prix auto.")
+    else:
+        st.info(f"👇 **{len(st.session_state['api_results'])} résultats trouvés**. Cliquez sur 'Choisir' pour valider.")
+        
+    cols = st.columns(3)
+    for i, card in enumerate(st.session_state['api_results']):
+        col_idx = i % 3
+        with cols[col_idx]:
+            img_url = card['images']['small']
+            st.image(img_url, use_container_width=True)
+            st.caption(f"**{card['name']}**")
+            st.caption(f"_{card['set']['name']}_")
+
+            price_disp = "Prix N/A"
+            if card.get('cardmarket') and 'prices' in card['cardmarket']:
+                price_val = card['cardmarket']['prices']['averageSellPrice']
+                price_disp = f"{price_val} €"
             
-            if st.button("Valider les informations manuelles"):
-                manual_card = {
-                    'name': man_name,
-                    'set': {'name': man_set},
-                    'rarity': 'Manuelle',
-                    'cardmarket': None,
-                    'images': {'small': None} 
-                }
-                st.session_state['selected_api_card'] = manual_card
+            # BOUTON SELECTION
+            if st.button(f"Choisir ({price_disp})", key=f"sel_{card['id']}"):
+                st.session_state['selected_api_card'] = card
+                st.session_state['search_expanded'] = False # ON FERME LE PANNEAU DE RECHERCHE
                 st.rerun()
+            
+            card_num = str(card.get('number', ''))
+            if not card_num and '-' in str(card['id']):
+                    card_num = str(card['id']).split('-')[-1]
+            
+            ebay_query = f"{card['name']} {card_num}".strip()
+            ebay_url = f"https://www.ebay.fr/sch/i.html?_nkw={ebay_query}&LH_Sold=1&LH_Complete=1"
+            st.markdown(f"🛒 [Voir ventes eBay]({ebay_url})")
+            st.write("---")
+
+# CAS 3 : MODE MANUEL
+if st.session_state['manual_mode']:
+    st.markdown("---")
+    st.info("✍️ Mode Manuel activé : Entrez les détails de votre carte.")
+    with st.container():
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
+            man_name = st.text_input("Nom de la Carte", value="Ma Carte")
+        with col_m2:
+            man_set = st.text_input("Série / Extension", value="Inconnue")
+        
+        if st.button("Valider les informations manuelles"):
+            manual_card = {
+                'name': man_name,
+                'set': {'name': man_set},
+                'rarity': 'Manuelle',
+                'cardmarket': None,
+                'images': {'small': None} 
+            }
+            st.session_state['selected_api_card'] = manual_card
+            st.session_state['search_expanded'] = False # On ferme la recherche
+            st.rerun()
 
 final_price_str = "Non défini"
 selected_card_data = None
@@ -361,94 +368,96 @@ if st.session_state['selected_api_card']:
         final_price_str = f"{selected_card_data['cardmarket']['prices']['averageSellPrice']} €"
     else:
         final_price_str = "Saisir manuellement ci-dessous"
-    
-    # st.info déplacé plus haut dans la zone de sélection unique pour éviter les doublons
 
 # --- 2. MANUEL ---
-with st.expander("🧮 2. Prix Manuel (Obligatoire si Mode Secours/Manuel)", expanded=(final_price_str.startswith("Saisir"))):
-    man_price = st.number_input("Prix estimé (€)", 0.0)
-    if man_price > 0:
-        final_price_str = f"{man_price} € (Manuel)"
+# On affiche le prix manuel UNIQUEMENT si une carte est sélectionnée mais n'a pas de prix
+if st.session_state['selected_api_card']:
+    with st.expander("🧮 2. Prix Manuel (Obligatoire si Mode Secours/Manuel)", expanded=(final_price_str.startswith("Saisir"))):
+        man_price = st.number_input("Prix estimé (€)", 0.0)
+        if man_price > 0:
+            final_price_str = f"{man_price} € (Manuel)"
 
 # --- 3. PHOTO ---
-st.markdown("### 📸 3. Gradation (Centrage)")
+# On n'affiche la gradation QUE si une carte est sélectionnée (pour éviter de grader "rien")
+if st.session_state['selected_api_card']:
+    st.markdown("### 📸 3. Gradation (Centrage)")
 
-tab_cam, tab_upload = st.tabs(["📸 Caméra Directe", "📂 Importer Fichier"])
+    tab_cam, tab_upload = st.tabs(["📸 Caméra Directe", "📂 Importer Fichier"])
 
-img_input = None
-with tab_cam:
-    cam_pic = st.camera_input("Prendre une photo")
-    if cam_pic: img_input = cam_pic
-with tab_upload:
-    up_pic = st.file_uploader("Choisir une image", type=['jpg', 'png', 'jpeg'])
-    if up_pic: img_input = up_pic
+    img_input = None
+    with tab_cam:
+        cam_pic = st.camera_input("Prendre une photo")
+        if cam_pic: img_input = cam_pic
+    with tab_upload:
+        up_pic = st.file_uploader("Choisir une image", type=['jpg', 'png', 'jpeg'])
+        if up_pic: img_input = up_pic
 
-uploaded_extras = []
+    uploaded_extras = []
 
-if img_input:
-    raw = process_image(img_input)
-    h_o, w_o = raw.shape[:2]
-    
-    st.write("**A. Découpage (Crop)**")
-    c_cut1, c_cut2 = st.columns(2)
-    with c_cut1:
-        ct = st.slider("Haut", 0, h_o, 0)
-        cb = st.slider("Bas", 0, h_o, h_o)
-    with c_cut2:
-        cl = st.slider("Gauche", 0, w_o, 0)
-        cr = st.slider("Droite", 0, w_o, w_o)
+    if img_input:
+        raw = process_image(img_input)
+        h_o, w_o = raw.shape[:2]
         
-    if ct>=cb: cb=ct+10
-    if cl>=cr: cr=cl+10
-    cropped = raw[ct:cb, cl:cr]
-    st.image(cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB), use_container_width=True)
-    
-    st.write("---")
-    st.write("**B. Centrage**")
-    h_c, w_c = cropped.shape[:2]
-    
-    sc1, sc2 = st.columns(2)
-    with sc1:
-        st.caption("Horizontal")
-        lo = st.slider("J-Gau", 0, w_c, int(w_c*0.02), key="lo")
-        li = st.slider("V-Gau", 0, w_c, int(w_c*0.08), key="li")
-        ri = st.slider("V-Dro", 0, w_c, int(w_c*0.92), key="ri")
-        ro = st.slider("J-Dro", 0, w_c, int(w_c*0.98), key="ro")
-    with sc2:
-        st.caption("Vertical")
-        to = st.slider("J-Haut", 0, h_c, int(h_c*0.02), key="to")
-        ti = st.slider("V-Haut", 0, h_c, int(h_c*0.08), key="ti")
-        bi = st.slider("V-Bas", 0, h_c, int(h_c*0.92), key="bi")
-        bo = st.slider("J-Bas", 0, h_c, int(h_c*0.98), key="bo")
-        
-    final = draw_alignment_lines(cropped, lo, li, ri, ro, to, ti, bi, bo)
-    st.image(cv2.cvtColor(final, cv2.COLOR_BGR2RGB), use_container_width=True)
-    
-    bl, br = abs(li-lo), abs(ro-ri)
-    bt, bb = abs(ti-to), abs(bo-bi)
-    th, tv = bl+br, bt+bb
-    
-    # --- 4. PHOTOS SUPPLEMENTAIRES ---
-    st.write("---")
-    st.markdown("### 🖼️ 4. Photos Supplémentaires (Optionnel)")
-    uploaded_extras = st.file_uploader("Ajouter dos / défauts", type=['jpg', 'png', 'jpeg'], accept_multiple_files=True)
-    
-    if uploaded_extras:
-        cols_extra = st.columns(4)
-        for i, extra in enumerate(uploaded_extras):
-            with cols_extra[i % 4]:
-                st.image(extra, use_container_width=True)
-
-    if th>0 and tv>0:
-        rh, rv = (bl/th)*100, (bt/tv)*100
+        st.write("**A. Découpage (Crop)**")
+        c_cut1, c_cut2 = st.columns(2)
+        with c_cut1:
+            ct = st.slider("Haut", 0, h_o, 0)
+            cb = st.slider("Bas", 0, h_o, h_o)
+        with c_cut2:
+            cl = st.slider("Gauche", 0, w_o, 0)
+            cr = st.slider("Droite", 0, w_o, w_o)
+            
+        if ct>=cb: cb=ct+10
+        if cl>=cr: cr=cl+10
+        cropped = raw[ct:cb, cl:cr]
+        st.image(cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB), use_container_width=True)
         
         st.write("---")
-        st.markdown("### 📊 Résultats & PDF")
-        k1, k2 = st.columns(2)
-        k1.info(f"H: {rh:.1f}%")
-        k2.info(f"V: {rv:.1f}%")
+        st.write("**B. Centrage**")
+        h_c, w_c = cropped.shape[:2]
         
-        card_label = selected_card_data['name'] if selected_card_data else "Carte"
+        sc1, sc2 = st.columns(2)
+        with sc1:
+            st.caption("Horizontal")
+            lo = st.slider("J-Gau", 0, w_c, int(w_c*0.02), key="lo")
+            li = st.slider("V-Gau", 0, w_c, int(w_c*0.08), key="li")
+            ri = st.slider("V-Dro", 0, w_c, int(w_c*0.92), key="ri")
+            ro = st.slider("J-Dro", 0, w_c, int(w_c*0.98), key="ro")
+        with sc2:
+            st.caption("Vertical")
+            to = st.slider("J-Haut", 0, h_c, int(h_c*0.02), key="to")
+            ti = st.slider("V-Haut", 0, h_c, int(h_c*0.08), key="ti")
+            bi = st.slider("V-Bas", 0, h_c, int(h_c*0.92), key="bi")
+            bo = st.slider("J-Bas", 0, h_c, int(h_c*0.98), key="bo")
+            
+        final = draw_alignment_lines(cropped, lo, li, ri, ro, to, ti, bi, bo)
+        st.image(cv2.cvtColor(final, cv2.COLOR_BGR2RGB), use_container_width=True)
         
-        pdf_data = create_pdf(final, card_label, bl, br, bt, bb, rh, rv, final_price_str, selected_card_data, extra_images=uploaded_extras)
-        st.download_button("📥 Télécharger Rapport PDF", pdf_data, f"Rapport_{card_label}.pdf", "application/pdf")
+        bl, br = abs(li-lo), abs(ro-ri)
+        bt, bb = abs(ti-to), abs(bo-bi)
+        th, tv = bl+br, bt+bb
+        
+        # --- 4. PHOTOS SUPPLEMENTAIRES ---
+        st.write("---")
+        st.markdown("### 🖼️ 4. Photos Supplémentaires (Optionnel)")
+        uploaded_extras = st.file_uploader("Ajouter dos / défauts", type=['jpg', 'png', 'jpeg'], accept_multiple_files=True)
+        
+        if uploaded_extras:
+            cols_extra = st.columns(4)
+            for i, extra in enumerate(uploaded_extras):
+                with cols_extra[i % 4]:
+                    st.image(extra, use_container_width=True)
+
+        if th>0 and tv>0:
+            rh, rv = (bl/th)*100, (bt/tv)*100
+            
+            st.write("---")
+            st.markdown("### 📊 Résultats & PDF")
+            k1, k2 = st.columns(2)
+            k1.info(f"H: {rh:.1f}%")
+            k2.info(f"V: {rv:.1f}%")
+            
+            card_label = selected_card_data['name'] if selected_card_data else "Carte"
+            
+            pdf_data = create_pdf(final, card_label, bl, br, bt, bb, rh, rv, final_price_str, selected_card_data, extra_images=uploaded_extras)
+            st.download_button("📥 Télécharger Rapport PDF", pdf_data, f"Rapport_{card_label}.pdf", "application/pdf")
