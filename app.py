@@ -8,10 +8,9 @@ import requests
 import re
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Poké-Station V13", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Poké-Station V14", page_icon="⚡", layout="wide")
 
 # --- DICTIONNAIRE DE TRADUCTION (FR -> EN) ---
-# Mise à jour pour inclure des termes techniques (Radieux, Brillant...)
 POKEMON_NAMES = {
     "tortank": "Blastoise", "dracaufeu": "Charizard", "florizarre": "Venusaur",
     "reptincel": "Charmeleon", "salameche": "Charmander", "carapuce": "Squirtle",
@@ -42,11 +41,12 @@ def check_password():
             else:
                 st.error("❌ Mauvais code")
         except (FileNotFoundError, KeyError):
-            if password_input == "1234":
+            # MODIFICATION DU MOT DE PASSE DE SECOURS ICI
+            if password_input == "Nono050417?!": 
                 st.session_state['password_correct'] = True
                 st.rerun()
             else:
-                st.error("❌ Mauvais code (Mode Secours : essayez 1234)")
+                st.error("❌ Mauvais code (Mode Secours : essayez 'admin')")
             
     return False
 
@@ -106,7 +106,7 @@ def get_card_price(user_query):
         number_query = f" number:{number_val}"
         name_part = clean_query[:match.start()].strip()
 
-    # 2. Traduction intelligente (mot à mot pour gérer "Tortank EX" -> "Blastoise EX")
+    # 2. Traduction intelligente
     name_words = name_part.split()
     translated_words = [POKEMON_NAMES.get(word, word) for word in name_words]
     translated_name = " ".join(translated_words)
@@ -230,7 +230,7 @@ def create_pdf(image_array, card_name, g_px, d_px, h_px, b_px, rh, rv, final_pri
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 # --- INTERFACE ---
-st.title("⚡ Poké-Station V13")
+st.title("⚡ Poké-Station V14")
 
 if 'selected_api_card' not in st.session_state:
     st.session_state['selected_api_card'] = None
@@ -249,6 +249,8 @@ with st.expander("🔎 1. Recherche & Prix", expanded=True):
         st.write("") 
         if st.button("Go"):
             st.session_state['manual_mode'] = False # Reset mode manuel
+            # RESET SELECTION POUR REAFFICHER LA GRILLE
+            st.session_state['selected_api_card'] = None 
             with st.spinner("Recherche..."):
                 results, source = get_card_price(search_query)
                 if results:
@@ -258,14 +260,42 @@ with st.expander("🔎 1. Recherche & Prix", expanded=True):
                     st.warning("Aucune carte trouvée.")
                     
     # OPTION MANUELLE DE SECOURS
-    if st.button("📝 Créer la carte manuellement (si introuvable)"):
-        st.session_state['manual_mode'] = True
-        st.session_state['api_results'] = []
-        st.session_state['selected_api_card'] = None
-        st.rerun()
+    if not st.session_state.get('api_results') and not st.session_state['selected_api_card']:
+        if st.button("📝 Créer la carte manuellement (si introuvable)"):
+            st.session_state['manual_mode'] = True
+            st.session_state['api_results'] = []
+            st.session_state['selected_api_card'] = None
+            st.rerun()
 
-    # AFFICHAGE RESULTATS API
-    if 'api_results' in st.session_state and st.session_state['api_results'] and not st.session_state['manual_mode']:
+    # LOGIQUE D'AFFICHAGE : SOIT CARTE UNIQUE, SOIT GRILLE
+    if st.session_state['selected_api_card']:
+        # --- VUE CARTE UNIQUE (Après sélection) ---
+        card = st.session_state['selected_api_card']
+        
+        st.success("✅ Carte Sélectionnée")
+        col_sel_img, col_sel_info = st.columns([1, 2])
+        
+        with col_sel_img:
+            # On gère le cas manuel où 'images' peut ne pas exister ou être vide
+            if card.get('images') and card['images'].get('small'):
+                st.image(card['images']['small'], width=200)
+            else:
+                st.info("Pas d'image (Mode Manuel)")
+
+        with col_sel_info:
+            st.markdown(f"### {card['name']}")
+            st.caption(f"Série : {card['set']['name']}")
+            
+            # Affichage du prix auto s'il existe
+            if card.get('cardmarket') and 'prices' in card['cardmarket']:
+                st.metric("Prix Cardmarket (Moyen)", f"{card['cardmarket']['prices']['averageSellPrice']} €")
+            
+            if st.button("↩️ Changer de carte"):
+                st.session_state['selected_api_card'] = None
+                st.rerun()
+
+    elif 'api_results' in st.session_state and st.session_state['api_results'] and not st.session_state['manual_mode']:
+        # --- VUE GRILLE DE RESULTATS (Si aucune carte sélectionnée) ---
         
         if st.session_state['api_source'] == "fallback":
             st.info("ℹ️ Mode Secours (TCGDex) : Images chargées sans les prix auto.")
@@ -287,9 +317,10 @@ with st.expander("🔎 1. Recherche & Prix", expanded=True):
                     price_val = card['cardmarket']['prices']['averageSellPrice']
                     price_disp = f"{price_val} €"
                 
+                # BOUTON SELECTION AVEC RERUN
                 if st.button(f"Choisir ({price_disp})", key=f"sel_{card['id']}"):
                     st.session_state['selected_api_card'] = card
-                    st.success(f"Sélectionné : {card['name']}")
+                    st.rerun() # On recharge pour cacher la grille
                 
                 card_num = str(card.get('number', ''))
                 if not card_num and '-' in str(card['id']):
@@ -311,15 +342,15 @@ with st.expander("🔎 1. Recherche & Prix", expanded=True):
                 man_set = st.text_input("Série / Extension", value="Inconnue")
             
             if st.button("Valider les informations manuelles"):
-                # On crée un faux objet carte pour le reste du script
                 manual_card = {
                     'name': man_name,
                     'set': {'name': man_set},
                     'rarity': 'Manuelle',
-                    'cardmarket': None # Pas de prix auto
+                    'cardmarket': None,
+                    'images': {'small': None} 
                 }
                 st.session_state['selected_api_card'] = manual_card
-                st.success(f"Carte manuelle définie : {man_name}")
+                st.rerun()
 
 final_price_str = "Non défini"
 selected_card_data = None
@@ -331,7 +362,7 @@ if st.session_state['selected_api_card']:
     else:
         final_price_str = "Saisir manuellement ci-dessous"
     
-    st.info(f"📍 Carte active : **{selected_card_data['name']}** | Prix retenu : **{final_price_str}**")
+    # st.info déplacé plus haut dans la zone de sélection unique pour éviter les doublons
 
 # --- 2. MANUEL ---
 with st.expander("🧮 2. Prix Manuel (Obligatoire si Mode Secours/Manuel)", expanded=(final_price_str.startswith("Saisir"))):
