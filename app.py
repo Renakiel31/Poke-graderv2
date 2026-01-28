@@ -27,11 +27,11 @@ def check_password():
         return True
 
     st.markdown("### 🔒 Accès Restreint")
-    password_input = st.text_input("Entrez le code d'accès", type="password")
+    password_input = st.text_input("Entrez le code d'accès", type="Nono050417?!")
 
     if password_input:
-        # Tente de récupérer le secret, sinon utilise le code de secours "1234"
         try:
+            # Tente de récupérer le secret, sinon utilise le code de secours "1234"
             secret_code = st.secrets["access_code"]
             if password_input == secret_code:
                 st.session_state['password_correct'] = True
@@ -39,7 +39,6 @@ def check_password():
             else:
                 st.error("❌ Mauvais code")
         except (FileNotFoundError, KeyError):
-            # Si on est sur Android/Local sans fichier secrets.toml
             if password_input == "1234":
                 st.session_state['password_correct'] = True
                 st.rerun()
@@ -59,7 +58,6 @@ def get_card_price(card_name):
     search_term = POKEMON_NAMES.get(clean_name, card_name)
     
     try:
-        # Timeout un peu plus long pour mobile (réseau parfois lent)
         url = f"https://api.pokemontcg.io/v2/cards?q=name:\"{search_term}*\"&pageSize=5"
         response = requests.get(url, timeout=8) 
         data = response.json()
@@ -72,6 +70,7 @@ def get_card_price(card_name):
         return None
 
 def process_image(image_file):
+    # Lit le fichier image (buffer) et le convertit pour OpenCV
     file_bytes = np.asarray(bytearray(image_file.read()), dtype=np.uint8)
     return cv2.imdecode(file_bytes, 1)
 
@@ -80,7 +79,6 @@ def draw_alignment_lines(img, l_out, l_in, r_in, r_out, t_out, t_in, b_in, b_out
     h, w = img.shape[:2]
     YELLOW = (0, 255, 255)
     GREEN = (0, 255, 0)
-    # Lignes plus épaisses pour visibilité sur petit écran
     THICKNESS = 4 if w > 1000 else 2 
     
     cv2.line(img_lines, (l_out, 0), (l_out, h), YELLOW, THICKNESS)
@@ -93,21 +91,35 @@ def draw_alignment_lines(img, l_out, l_in, r_in, r_out, t_out, t_in, b_in, b_out
     cv2.line(img_lines, (0, b_out), (w, b_out), YELLOW, THICKNESS)
     return img_lines
 
+# --- CORRECTIF ENCODAGE PDF ---
+def clean_text(text):
+    """Nettoie le texte pour éviter le crash UnicodeEncodeError du PDF"""
+    # Force la conversion en string pour éviter les problèmes de type
+    text = str(text)
+    # Le symbole Euro fait planter FPDF standard -> on le remplace
+    text = text.replace("€", "EUR")
+    # On force l'encodage latin-1 en remplaçant les caractères inconnus par ?
+    return text.encode('latin-1', 'replace').decode('latin-1')
+
 def create_pdf(image_array, card_name, g_px, d_px, h_px, b_px, rh, rv, final_price, api_card_data=None):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16)
-    pdf.cell(0, 10, txt=f"Rapport : {card_name}", ln=1, align='C')
+    
+    # On nettoie tous les textes affichés
+    title = clean_text(f"Rapport : {card_name}")
+    pdf.cell(0, 10, txt=title, ln=1, align='C')
     
     pdf.set_font("Arial", 'I', 10)
     if api_card_data:
         set_name = api_card_data.get('set', {}).get('name', 'Inconnu')
         rarity = api_card_data.get('rarity', 'Inconnue')
-        # Nettoyage des caractères non-latin1 pour FPDF
-        set_name = set_name.encode('latin-1', 'replace').decode('latin-1')
-        pdf.cell(0, 8, txt=f"Serie: {set_name} | Rarete: {rarity}", ln=1, align='C')
         
-    pdf.cell(0, 8, txt=f"Date: {datetime.now().strftime('%d/%m/%Y')} | Valeur: {final_price}", ln=1, align='C')
+        info_txt = clean_text(f"Serie: {set_name} | Rarete: {rarity}")
+        pdf.cell(0, 8, txt=info_txt, ln=1, align='C')
+        
+    price_txt = clean_text(f"Date: {datetime.now().strftime('%d/%m/%Y')} | Valeur: {final_price}")
+    pdf.cell(0, 8, txt=price_txt, ln=1, align='C')
     
     temp_card = "temp_card_mobile.jpg"
     cv2.imwrite(temp_card, image_array)
@@ -115,17 +127,21 @@ def create_pdf(image_array, card_name, g_px, d_px, h_px, b_px, rh, rv, final_pri
     
     pdf.set_y(170)
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 10, "Details du Centrage", ln=1)
+    pdf.cell(0, 10, clean_text("Details du Centrage"), ln=1)
     pdf.set_font("Arial", '', 11)
     
     grade_h = "GEM MINT (10)" if 45 <= rh <= 55 else "MINT (9)" if 40 <= rh <= 60 else "OC"
     grade_v = "GEM MINT (10)" if 45 <= rv <= 55 else "MINT (9)" if 40 <= rv <= 60 else "OC"
     
-    pdf.cell(95, 8, f"Horiz.: {g_px}/{d_px} ({rh:.1f}%) -> {grade_h}", border=1)
-    pdf.cell(95, 8, f"Vert.: {h_px}/{b_px} ({rv:.1f}%) -> {grade_v}", border=1, ln=1)
+    line1 = clean_text(f"Horiz.: {g_px}/{d_px} ({rh:.1f}%) -> {grade_h}")
+    line2 = clean_text(f"Vert.: {h_px}/{b_px} ({rv:.1f}%) -> {grade_v}")
+    
+    pdf.cell(95, 8, line1, border=1)
+    pdf.cell(95, 8, line2, border=1, ln=1)
     
     if os.path.exists(temp_card): os.remove(temp_card)
-    return pdf.output(dest='S').encode('latin-1')
+    # AJOUT CRITIQUE : on utilise 'replace' ici aussi pour empêcher le crash final
+    return pdf.output(dest='S').encode('latin-1', 'replace')
 
 # --- INTERFACE ---
 st.title("⚡ Poké-Station V10")
@@ -150,7 +166,6 @@ with st.expander("🔎 1. Recherche & Prix", expanded=True):
 
     if 'api_results' in st.session_state and st.session_state['api_results']:
         st.write("### Résultats :")
-        # Sur mobile, on affiche en 2 colonnes c'est plus lisible
         cols = st.columns(2)
         for i, card in enumerate(st.session_state['api_results'][:4]):
             col_idx = i % 2
@@ -179,13 +194,28 @@ with st.expander("🧮 2. Prix Manuel", expanded=False):
     if man_price > 0:
         final_price_str = f"{man_price} € (Manuel)"
 
-# --- 3. PHOTO ---
+# --- 3. PHOTO (MODIFIÉ POUR CAMERA) ---
 st.markdown("### 📸 3. Gradation")
-# L'option 'camera' permet d'activer directement l'appareil photo sur Android
-uploaded = st.file_uploader("Prendre une photo", type=['jpg', 'png', 'jpeg'])
 
-if uploaded:
-    raw = process_image(uploaded)
+# Onglets pour choisir entre Caméra et Importation
+tab_cam, tab_upload = st.tabs(["📸 Caméra Directe", "📂 Importer Fichier"])
+
+img_input = None
+
+with tab_cam:
+    # C'est ce composant qui active la caméra sur mobile
+    cam_pic = st.camera_input("Prendre une photo")
+    if cam_pic:
+        img_input = cam_pic
+
+with tab_upload:
+    up_pic = st.file_uploader("Choisir une image", type=['jpg', 'png', 'jpeg'])
+    if up_pic:
+        img_input = up_pic
+
+if img_input:
+    # Traitement commun quelle que soit la source (Caméra ou Fichier)
+    raw = process_image(img_input)
     h_o, w_o = raw.shape[:2]
     
     st.write("**A. Découpage (Crop)**")
