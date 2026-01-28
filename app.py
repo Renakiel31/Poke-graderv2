@@ -8,9 +8,10 @@ import requests
 import re
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Poké-Station V12", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Poké-Station V13", page_icon="⚡", layout="wide")
 
 # --- DICTIONNAIRE DE TRADUCTION (FR -> EN) ---
+# Mise à jour pour inclure des termes techniques (Radieux, Brillant...)
 POKEMON_NAMES = {
     "tortank": "Blastoise", "dracaufeu": "Charizard", "florizarre": "Venusaur",
     "reptincel": "Charmeleon", "salameche": "Charmander", "carapuce": "Squirtle",
@@ -19,7 +20,9 @@ POKEMON_NAMES = {
     "aquali": "Vaporeon", "voltali": "Jolteon", "pyroli": "Flareon",
     "mewtwo": "Mewtwo", "mew": "Mew", "pikachu": "Pikachu",
     "rayquaza": "Rayquaza", "lugia": "Lugia", "dracolosse": "Dragonite",
-    "leviator": "Gyarados", "ectoplasma": "Gengar"
+    "leviator": "Gyarados", "ectoplasma": "Gengar",
+    "radieux": "Radiant", "brillant": "Shining", "lumineux": "Light", "obscur": "Dark",
+    "star": "Star", "vmax": "VMAX", "vstar": "VSTAR", "ex": "ex"
 }
 
 def check_password():
@@ -55,26 +58,20 @@ if not check_password():
 def search_tcgdex_fallback(query):
     """API de secours : TCGDex (Français, sans prix mais très complète)"""
     try:
-        # TCGDex cherche directement en français
         url = f"https://api.tcgdex.net/v2/fr/cards?name={query}"
         response = requests.get(url, timeout=15)
         data = response.json()
         
         results = []
         if data:
-            # CORRECTION : On ne coupe plus à 20, on cherche jusqu'à 60 cartes valides
             count = 0
             for card in data:
-                if count >= 60: break # Limite de sécurité pour ne pas faire planter le navigateur
+                if count >= 60: break 
                 
-                # On vérifie si l'image existe
                 img_url = f"{card['image']}/high.png" if 'image' in card else None
                 if not img_url: continue
 
-                # Extraction du numéro (souvent à la fin de l'ID local ex: sv3pt5-184)
                 card_number = card['id'].split('-')[-1] if '-' in card['id'] else ""
-                
-                # Extraction du nom de la série (parfois absent ou différent)
                 set_name = card.get('set', {}).get('name', 'Série Inconnue')
 
                 results.append({
@@ -84,7 +81,7 @@ def search_tcgdex_fallback(query):
                     'set': {'name': set_name},
                     'rarity': card.get('rarity', 'Standard'),
                     'images': {'small': img_url, 'large': img_url},
-                    'cardmarket': None # Pas de prix sur TCGDex
+                    'cardmarket': None 
                 })
                 count += 1
         return results
@@ -109,18 +106,18 @@ def get_card_price(user_query):
         number_query = f" number:{number_val}"
         name_part = clean_query[:match.start()].strip()
 
-    # 2. Traduction du nom
-    translated_name = POKEMON_NAMES.get(name_part, name_part)
+    # 2. Traduction intelligente (mot à mot pour gérer "Tortank EX" -> "Blastoise EX")
+    name_words = name_part.split()
+    translated_words = [POKEMON_NAMES.get(word, word) for word in name_words]
+    translated_name = " ".join(translated_words)
     
     # 3. Construction de la requête
     final_query = f"name:\"{translated_name}*\"{number_query}"
     
     try:
-        # CORRECTION : pageSize augmenté à 100 pour voir toutes les versions
         url = f"https://api.pokemontcg.io/v2/cards?q={final_query}&pageSize=100"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0'}
         
-        # Timeout augmenté à 30s pour laisser le temps de charger 100 résultats
         response = requests.get(url, headers=headers, timeout=30) 
         
         try:
@@ -142,7 +139,7 @@ def get_card_price(user_query):
         raise Exception("Aucun résultat sur API Officielle")
 
     except Exception as e:
-        st.warning(f"⚠️ API Prix indisponible ({e}). Bascule sur l'API de secours (Images seules)...")
+        st.warning(f"⚠️ API Prix indisponible ou carte introuvable ({e}). Bascule sur l'API de secours...")
         fallback_results = search_tcgdex_fallback(name_part)
         if fallback_results:
             return fallback_results, "fallback"
@@ -233,77 +230,96 @@ def create_pdf(image_array, card_name, g_px, d_px, h_px, b_px, rh, rv, final_pri
     return pdf.output(dest='S').encode('latin-1', 'replace')
 
 # --- INTERFACE ---
-st.title("⚡ Poké-Station V12")
+st.title("⚡ Poké-Station V13")
 
 if 'selected_api_card' not in st.session_state:
     st.session_state['selected_api_card'] = None
 if 'api_source' not in st.session_state:
     st.session_state['api_source'] = None
+if 'manual_mode' not in st.session_state:
+    st.session_state['manual_mode'] = False
 
 # --- 1. RECHERCHE ---
 with st.expander("🔎 1. Recherche & Prix", expanded=True):
     col_search, col_btn = st.columns([3, 1])
     with col_search:
-        search_query = st.text_input("Nom du Pokémon (ex: Tortank 200)", placeholder="Nom + Numéro (Optionnel)")
+        search_query = st.text_input("Nom du Pokémon (ex: Tortank 200)", placeholder="Nom + Numéro")
     with col_btn:
         st.write("") 
         st.write("") 
         if st.button("Go"):
-            with st.spinner("Recherche multi-sources (jusqu'à 100 cartes)..."):
+            st.session_state['manual_mode'] = False # Reset mode manuel
+            with st.spinner("Recherche..."):
                 results, source = get_card_price(search_query)
                 if results:
                     st.session_state['api_results'] = results
                     st.session_state['api_source'] = source
                 else:
-                    st.warning("Aucune carte trouvée, même sur l'API de secours.")
+                    st.warning("Aucune carte trouvée.")
+                    
+    # OPTION MANUELLE DE SECOURS
+    if st.button("📝 Créer la carte manuellement (si introuvable)"):
+        st.session_state['manual_mode'] = True
+        st.session_state['api_results'] = []
+        st.session_state['selected_api_card'] = None
+        st.rerun()
 
-    if 'api_results' in st.session_state and st.session_state['api_results']:
+    # AFFICHAGE RESULTATS API
+    if 'api_results' in st.session_state and st.session_state['api_results'] and not st.session_state['manual_mode']:
         
-        # Message sur la source
         if st.session_state['api_source'] == "fallback":
             st.info("ℹ️ Mode Secours (TCGDex) : Images chargées sans les prix auto.")
         else:
             st.success(f"✅ Données officielles : {len(st.session_state['api_results'])} résultats trouvés.")
             
         st.write("### Choisissez votre carte :")
-        
-        # Affichage en grille de 3 colonnes pour voir plus de cartes
         cols = st.columns(3)
         for i, card in enumerate(st.session_state['api_results']):
             col_idx = i % 3
             with cols[col_idx]:
-                # IMAGE
                 img_url = card['images']['small']
                 st.image(img_url, use_container_width=True)
-                
-                # TITRE + SET
                 st.caption(f"**{card['name']}**")
                 st.caption(f"_{card['set']['name']}_")
 
-                # PRIX CARDMARKET (Si dispo)
                 price_disp = "Prix N/A"
                 if card.get('cardmarket') and 'prices' in card['cardmarket']:
                     price_val = card['cardmarket']['prices']['averageSellPrice']
                     price_disp = f"{price_val} €"
                 
-                # BOUTON SELECTION
                 if st.button(f"Choisir ({price_disp})", key=f"sel_{card['id']}"):
                     st.session_state['selected_api_card'] = card
                     st.success(f"Sélectionné : {card['name']}")
                 
-                # LIEN EBAY (Généré pour toutes les cartes)
-                # On essaie de récupérer le numéro de la carte proprement
                 card_num = str(card.get('number', ''))
-                # Si pas de numéro (ex: API fallback), on essaie de le deviner depuis l'ID
                 if not card_num and '-' in str(card['id']):
                      card_num = str(card['id']).split('-')[-1]
                 
                 ebay_query = f"{card['name']} {card_num}".strip()
-                # URL eBay filtrée sur "Ventes Réussies" (LH_Sold=1, LH_Complete=1)
                 ebay_url = f"https://www.ebay.fr/sch/i.html?_nkw={ebay_query}&LH_Sold=1&LH_Complete=1"
-                
-                st.markdown(f"🛒 [Voir ventes eBay réussies]({ebay_url})")
+                st.markdown(f"🛒 [Voir ventes eBay]({ebay_url})")
                 st.write("---")
+    
+    # AFFICHAGE FORMULAIRE MANUEL
+    if st.session_state['manual_mode']:
+        st.info("✍️ Mode Manuel activé : Entrez les détails de votre carte.")
+        with st.container():
+            col_m1, col_m2 = st.columns(2)
+            with col_m1:
+                man_name = st.text_input("Nom de la Carte", value=search_query if search_query else "Ma Carte")
+            with col_m2:
+                man_set = st.text_input("Série / Extension", value="Inconnue")
+            
+            if st.button("Valider les informations manuelles"):
+                # On crée un faux objet carte pour le reste du script
+                manual_card = {
+                    'name': man_name,
+                    'set': {'name': man_set},
+                    'rarity': 'Manuelle',
+                    'cardmarket': None # Pas de prix auto
+                }
+                st.session_state['selected_api_card'] = manual_card
+                st.success(f"Carte manuelle définie : {man_name}")
 
 final_price_str = "Non défini"
 selected_card_data = None
@@ -318,7 +334,7 @@ if st.session_state['selected_api_card']:
     st.info(f"📍 Carte active : **{selected_card_data['name']}** | Prix retenu : **{final_price_str}**")
 
 # --- 2. MANUEL ---
-with st.expander("🧮 2. Prix Manuel (Obligatoire si Mode Secours)", expanded=(final_price_str.startswith("Saisir"))):
+with st.expander("🧮 2. Prix Manuel (Obligatoire si Mode Secours/Manuel)", expanded=(final_price_str.startswith("Saisir"))):
     man_price = st.number_input("Prix estimé (€)", 0.0)
     if man_price > 0:
         final_price_str = f"{man_price} € (Manuel)"
