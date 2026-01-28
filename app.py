@@ -55,18 +55,28 @@ if not check_password():
 def get_card_price(card_name):
     """Cherche la carte sur l'API et renvoie les infos et le prix."""
     clean_name = card_name.lower().strip()
+    # Tentative de traduction simple si le mot exact est dans le dico
     search_term = POKEMON_NAMES.get(clean_name, card_name)
     
     try:
+        # CORRECTION TIMEOUT : Ajout de headers et augmentation du temps d'attente
         url = f"https://api.pokemontcg.io/v2/cards?q=name:\"{search_term}*\"&pageSize=5"
-        response = requests.get(url, timeout=8) 
+        
+        # On se fait passer pour un navigateur classique pour éviter les blocages
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        
+        # Timeout augmenté à 30 secondes (au lieu de 8)
+        response = requests.get(url, headers=headers, timeout=30) 
         data = response.json()
         
         if 'data' in data and data['data']:
             return data['data']
         return None
     except Exception as e:
-        st.error(f"Erreur connexion API: {e}")
+        # On affiche l'erreur de manière plus discrète si possible, ou on la log
+        st.warning(f"L'API met du temps à répondre ou est indisponible. Erreur : {e}")
         return None
 
 def process_image(image_file):
@@ -158,11 +168,12 @@ with st.expander("🔎 1. Recherche & Prix", expanded=True):
         st.write("") 
         st.write("") 
         if st.button("Go"):
-            results = get_card_price(search_query)
-            if results:
-                st.session_state['api_results'] = results
-            else:
-                st.warning("Rien trouvé. Essayez en anglais.")
+            with st.spinner("Recherche en cours..."): # Ajout d'un indicateur de chargement
+                results = get_card_price(search_query)
+                if results:
+                    st.session_state['api_results'] = results
+                else:
+                    st.warning("Rien trouvé ou API trop lente. Essayez en anglais ou réessayez.")
 
     if 'api_results' in st.session_state and st.session_state['api_results']:
         st.write("### Résultats :")
@@ -268,4 +279,3 @@ if img_input:
         
         pdf_data = create_pdf(final, card_label, bl, br, bt, bb, rh, rv, final_price_str, selected_card_data)
         st.download_button("📥 PDF", pdf_data, f"Rapport.pdf", "application/pdf")
-
