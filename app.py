@@ -8,10 +8,26 @@ import requests
 import re
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Poké-Station V17", page_icon="⚡", layout="wide")
+st.set_page_config(page_title="Poké-Station", page_icon="⚡", layout="wide")
 
 # 🔒 CONFIGURATION MOT DE PASSE DE SECOURS
 MOT_DE_PASSE_SECOURS = "admin"
+
+# --- STYLE CSS "APPLICATION MOBILE" (Hiding Web Elements) ---
+# C'est ce bloc qui fait disparaître les menus pour donner l'impression d'une vraie App
+hide_streamlit_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            footer {visibility: hidden;}
+            header {visibility: hidden;}
+            [data-testid="stToolbar"] {visibility: hidden;}
+            .main .block-container {
+                padding-top: 2rem;
+                padding-bottom: 2rem;
+            }
+            </style>
+            """
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # --- DICTIONNAIRE DE TRADUCTION (FR -> EN) ---
 POKEMON_NAMES = {
